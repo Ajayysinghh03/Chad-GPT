@@ -1,16 +1,57 @@
 import streamlit as st
 from backend import chatbot
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+import uuid
 
+# ***************  UTILITY FUNCTIONS *****************
+def generate_thread_id():
+    tid = uuid.uuid4()
+    return tid
+
+def reset_chat():
+    thread_id = generate_thread_id()
+    st.session_state["thread_id"] = thread_id
+    add_thread(st.session_state["thread_id"])
+    st.session_state["history"] = []
+
+def add_thread(thread_id):
+    if thread_id not in st.session_state["chat_threads"]:
+        st.session_state["chat_threads"].append(thread_id)
+
+def load_conversation(thread_id):
+    return chatbot.get_state(config = {"configurable":{"thread_id": st.session_state["thread_id"]}}).values["messages"]
+
+        
+        
+st.set_page_config(
+    page_title="Srii",
+    page_icon="🤖",
+    layout="centered"
+)
+
+st.title("🤖 Srii")
+
+
+# *************** SESSION SETUP ******************
+if "history" not in st.session_state:
+    st.session_state["history"] = [{"role": "ai", "content": "Hello! How can I assist you today?"}]
+
+if "thread_id" not in st.session_state:
+    st.session_state["thread_id"] = generate_thread_id()
+
+if "chat_threads" not in st.session_state:
+    st.session_state["chat_threads"] = []
+
+add_thread(st.session_state["thread_id"])
+
+CONFIG = {"configurable":{"thread_id": st.session_state["thread_id"]}}
 
 # *************** SIDEBAR UI *****************
 st.sidebar.title("Srii's Tools 🤖")
 with st.sidebar:
-    
     if st.button("🧹 Clear Chat"):
         st.session_state.history = []
-        st.session_state["thread_id"] += 1
-        st.rerun()
+        
     with st.expander("About Srii"):
         st.markdown("""
             - Siri ❌ Srii ✅
@@ -22,25 +63,25 @@ with st.sidebar:
     page_icon="🤖",
     layout="centered"
     )
-st.sidebar.button("New Chat")
+if st.sidebar.button("New Chat"):
+    reset_chat()
+
 st.sidebar.header("My Chats")
-        
-        
-st.set_page_config(
-    page_title="Srii",
-    page_icon="🤖",
-    layout="centered"
-)
 
-st.title("🤖 Srii")
+for thread_id in st.session_state["chat_threads"][::-1]:
+    if st.sidebar.button(str(thread_id)):
+        st.session_state["thread_id"] = thread_id
+        messages = load_conversation(thread_id)
+        temp_messages = []
+        for message in messages:
+            if isinstance(message, HumanMessage):
+                temp_messages.append({"role": "user", "content": message.content})
+            else:
+                temp_messages.append({"role": "ai", "content": message.content})
+        st.session_state["history"] = temp_messages
 
-if "thread_id" not in st.session_state:
-    st.session_state["thread_id"] = 1
 
-CONFIG = {"configurable":{"thread_id": st.session_state["thread_id"]}}
 
-if "history" not in st.session_state:
-    st.session_state["history"] = [{"role": "ai", "content": "Hello! How can I assist you today?"}]
 
 for message in st.session_state["history"]:
     with st.chat_message(message['role']):
