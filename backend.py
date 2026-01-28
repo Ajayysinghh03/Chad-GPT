@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile", temperature=0.7
+    model="llama-3.3-70b-versatile", temperature=0.8
 )
 
 class ChatState(TypedDict):
@@ -20,6 +20,7 @@ def chat_node(state: ChatState):
     messages = state["messages"]
     response = llm.invoke(messages)
     return {"messages": response}
+
 
 checkpointer = InMemorySaver()
 

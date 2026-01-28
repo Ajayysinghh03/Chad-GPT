@@ -2,10 +2,14 @@ import streamlit as st
 from backend import chatbot
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
+
+# *************** SIDEBAR UI *****************
+st.sidebar.title("Srii's Tools 🤖")
 with st.sidebar:
-    st.header("Configurations")
+    
     if st.button("🧹 Clear Chat"):
         st.session_state.history = []
+        st.session_state["thread_id"] += 1
         st.rerun()
     with st.expander("About Srii"):
         st.markdown("""
@@ -17,7 +21,9 @@ with st.sidebar:
     page_title="Srii",
     page_icon="🤖",
     layout="centered"
-)
+    )
+st.sidebar.button("New Chat")
+st.sidebar.header("My Chats")
         
         
 st.set_page_config(
@@ -28,7 +34,10 @@ st.set_page_config(
 
 st.title("🤖 Srii")
 
-CONFIG = {"configurable":{"thread_id": 1}}
+if "thread_id" not in st.session_state:
+    st.session_state["thread_id"] = 1
+
+CONFIG = {"configurable":{"thread_id": st.session_state["thread_id"]}}
 
 if "history" not in st.session_state:
     st.session_state["history"] = [{"role": "ai", "content": "Hello! How can I assist you today?"}]
