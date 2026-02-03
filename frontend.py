@@ -101,7 +101,9 @@ if user_input:
     st.session_state["history"].append({"role": "user", "content": user_input})
     with st.chat_message("human"):
         st.markdown(user_input)
+    
 
+    ### Assitant streaming block
     with st.chat_message("assistant"):
         def ai_only_stream():
             for message_chunk, metadata in chatbot.stream(
