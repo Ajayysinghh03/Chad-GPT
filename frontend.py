@@ -1,6 +1,6 @@
 import streamlit as st
 from backend import chatbot, rerieve_all_threads
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 import uuid
 
 # ***************  UTILITY FUNCTIONS *****************
@@ -103,16 +103,34 @@ if user_input:
         st.markdown(user_input)
     
 
-    ### Assitant streaming block
+    ### Assistant streaming block with status
     with st.chat_message("assistant"):
-        def ai_only_stream():
+        with st.status("Srii is working...", expanded=True) as status:
+            status_placeholder = st.empty()
+            message_placeholder = st.empty()
+            full_content = ""
+
             for message_chunk, metadata in chatbot.stream(
                 {"messages": [HumanMessage(content=user_input)]}, config=CONFIG,
-                stream_mode = "messages"
+                stream_mode="messages"
             ):
-                if isinstance(message_chunk, AIMessage):
-                    yield message_chunk.content
-        ai_message = st.write_stream(ai_only_stream())
+                node = metadata.get("langgraph_node", "")
+                if node == "chat_node":
+                    status_placeholder.caption("💭 Thinking...")
+                elif node == "tools":
+                    if isinstance(message_chunk, ToolMessage):
+                        tool_name = getattr(message_chunk, "name", "tool") or "tool"
+                        status_placeholder.caption(f"🔧 Using: **{tool_name}**")
+                    else:
+                        status_placeholder.caption("🔧 Using tools...")
+
+                if isinstance(message_chunk, AIMessage) and message_chunk.content:
+                    full_content += message_chunk.content
+                    message_placeholder.markdown(full_content + "▌")
+            status_placeholder.caption("✅ Done")
+            message_placeholder.markdown(full_content)
+
+        ai_message = full_content
 
     st.session_state["history"].append({"role": "assistant", "content": ai_message})
 
