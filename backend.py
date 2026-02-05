@@ -1,17 +1,27 @@
 from langgraph.graph import StateGraph, START, END
 from typing import TypedDict, Annotated
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
+from langchain_core.documents import Document
 from langchain_groq import ChatGroq
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode , tools_condition
+from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.tools import Tool, tool
 from dotenv import load_dotenv
+from pypdf import PdfReader
 import sqlite3
 import requests
+import io
+import contextvars
 
 load_dotenv()
+
+# Context var for current thread_id (set by frontend before streaming so RAG tool can use it)
+current_thread_id_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar("thread_id", default=None)
 
 
 ### ********************TOOLS DEFINITION SECTION******************** ###
@@ -36,7 +46,7 @@ def calculator(first_num:float, second_num:float, operation:str) -> dict:
         return {"first_num": first_num, "second_num": second_num, "operation": operation, "result": result}
     except Exception as e:
         return {"error": str(e)}
-    
+
 @tool
 def get_stock_price(symbol: str) -> dict:
     """Get the current stock price for a given symbol using a public API."""
@@ -45,25 +55,81 @@ def get_stock_price(symbol: str) -> dict:
     return r.json()
 
 
+### ******************** RAG (PDF) SECTION ******************** ###
+# Per-thread in-memory vector stores for uploaded PDFs
+_rag_vector_stores: dict[str, FAISS] = {}
+_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+_text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
 
-tools = [search_tool, calculator, get_stock_price]
+
+def _load_pdf_documents(pdf_bytes: bytes) -> list[Document]:
+    """Load PDF from bytes using pypdf and return LangChain Documents."""
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    docs = []
+    for i, page in enumerate(reader.pages):
+        text = page.extract_text()
+        if text and text.strip():
+            docs.append(Document(page_content=text.strip(), metadata={"page": i + 1, "source": "uploaded_pdf"}))
+    return docs
+
+
+def add_pdf_for_thread(thread_id: str, pdf_bytes: bytes) -> str:
+    """Ingest an uploaded PDF for the given thread. Creates/updates the vector store for RAG."""
+    docs = _load_pdf_documents(pdf_bytes)
+    if not docs:
+        return "No text could be extracted from the PDF."
+    chunks = _text_splitter.split_documents(docs)
+    if thread_id in _rag_vector_stores:
+        del _rag_vector_stores[thread_id]
+    vector_store = FAISS.from_documents(
+        documents=chunks,
+        embedding=_embeddings,
+    )
+    _rag_vector_stores[thread_id] = vector_store
+    return f"PDF ingested successfully. {len(chunks)} chunks from {len(docs)} page(s). You can now ask questions about this document."
+
+
+@tool
+def query_uploaded_document(question: str) -> str:
+    """Search the PDF document that the user uploaded in this chat and answer questions from it.
+    Use this when the user asks about their uploaded PDF, e.g. 'what is in my document?', 'summarize the PDF', 'what does the document say about X?'.
+    Returns relevant excerpts from the document. If no PDF was uploaded for this chat, returns a message saying so."""
+    thread_id = current_thread_id_ctx.get()
+    if not thread_id or thread_id not in _rag_vector_stores:
+        return "No PDF has been uploaded in this chat. Ask the user to upload a PDF first, then they can ask questions about it."
+    vector_store = _rag_vector_stores[thread_id]
+    results = vector_store.similarity_search(question, k=4)
+    if not results:
+        return "No relevant passages found in the uploaded document for this question."
+    excerpts = "\n\n---\n\n".join(doc.page_content for doc in results)
+    return f"Relevant excerpts from the uploaded PDF:\n\n{excerpts}"
+
+
+tools = [search_tool, calculator, get_stock_price, query_uploaded_document]
 
 
 
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile", temperature=0.8
+    model="llama-3.3-70b-versatile", temperature=0.3  # Lower = more reliable tool calls (Groq rejects malformed ones)
 )
 
 llm = llm.bind_tools(tools)
 
+
+#state definition
 class ChatState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
 def chat_node(state: ChatState):
     """LLM node that may answer the question directly and can call tools if needed."""
     messages = state["messages"]
-    response = llm.invoke(messages)
-    return {"messages": response}
+    try:
+        response = llm.invoke(messages)
+        return {"messages": response}
+    except Exception as e:
+        # Groq can raise when the model outputs invalid tool calls; return a fallback so the chat doesn't crash
+        err_msg = str(e).split("failed_generation")[0].strip() if "failed_generation" in str(e) else str(e)
+        return {"messages": [AIMessage(content=f"I ran into an issue while handling that: {err_msg}. Please try rephrasing or asking something else.")]}
 
 tool_node = ToolNode(tools)
 

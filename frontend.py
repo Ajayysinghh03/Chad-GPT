@@ -1,5 +1,5 @@
 import streamlit as st
-from backend import chatbot, rerieve_all_threads
+from backend import chatbot, rerieve_all_threads, add_pdf_for_thread, current_thread_id_ctx
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 import uuid
 
@@ -53,6 +53,17 @@ CONFIG = {"configurable":{"thread_id": st.session_state["thread_id"]}}
 
 # *************** SIDEBAR UI *****************
 st.sidebar.title("Srii's Tools 🤖")
+
+# PDF upload for RAG
+with st.sidebar.expander("📄 Upload PDF (ask questions about it)"):
+    uploaded_pdf = st.file_uploader("Choose a PDF", type=["pdf"], key="pdf_upload")
+    if uploaded_pdf is not None and st.button("Process PDF", key="process_pdf_btn"):
+        pdf_bytes = uploaded_pdf.read()
+        with st.spinner("Processing PDF..."):
+            result = add_pdf_for_thread(str(st.session_state["thread_id"]), pdf_bytes)
+        st.success(result)
+        st.caption("You can now ask questions about this PDF in the chat.")
+
 with st.sidebar:
     if st.button("🧹 Clear Chat"):
         st.session_state.history = []
@@ -110,23 +121,28 @@ if user_input:
             message_placeholder = st.empty()
             full_content = ""
 
-            for message_chunk, metadata in chatbot.stream(
-                {"messages": [HumanMessage(content=user_input)]}, config=CONFIG,
-                stream_mode="messages"
-            ):
-                node = metadata.get("langgraph_node", "")
-                if node == "chat_node":
-                    status_placeholder.caption("💭 Thinking...")
-                elif node == "tools":
-                    if isinstance(message_chunk, ToolMessage):
-                        tool_name = getattr(message_chunk, "name", "tool") or "tool"
-                        status_placeholder.caption(f"🔧 Using: **{tool_name}**")
-                    else:
-                        status_placeholder.caption("🔧 Using tools...")
+            # Set thread_id in context so RAG tool can use the correct vector store
+            token = current_thread_id_ctx.set(str(st.session_state["thread_id"]))
+            try:
+                for message_chunk, metadata in chatbot.stream(
+                    {"messages": [HumanMessage(content=user_input)]}, config=CONFIG,
+                    stream_mode="messages"
+                ):
+                    node = metadata.get("langgraph_node", "")
+                    if node == "chat_node":
+                        status_placeholder.caption("💭 Thinking...")
+                    elif node == "tools":
+                        if isinstance(message_chunk, ToolMessage):
+                            tool_name = getattr(message_chunk, "name", "tool") or "tool"
+                            status_placeholder.caption(f"🔧 Using: **{tool_name}**")
+                        else:
+                            status_placeholder.caption("🔧 Using tools...")
 
-                if isinstance(message_chunk, AIMessage) and message_chunk.content:
-                    full_content += message_chunk.content
-                    message_placeholder.markdown(full_content + "▌")
+                    if isinstance(message_chunk, AIMessage) and message_chunk.content:
+                        full_content += message_chunk.content
+                        message_placeholder.markdown(full_content + "▌")
+            finally:
+                current_thread_id_ctx.reset(token)
             status_placeholder.caption("✅ Done")
             message_placeholder.markdown(full_content)
 
