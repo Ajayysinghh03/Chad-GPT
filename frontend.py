@@ -98,7 +98,7 @@ for thread_id in st.session_state["chat_threads"][::-1]:
 
 
 
-
+### this loop is displaying the conversation history. We re-render the entire history on every new message for simplicity, but in a production app you'd want to optimize this.
 for message in st.session_state["history"]:
     with st.chat_message(message['role']):
         st.markdown(message['content'])

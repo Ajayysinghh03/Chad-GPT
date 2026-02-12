@@ -16,6 +16,8 @@ import sqlite3
 import requests
 import io
 import contextvars
+from langchain_google_genai import ChatGoogleGenerativeAI
+
 
 load_dotenv()
 
@@ -35,6 +37,7 @@ current_thread_id_ctx: contextvars.ContextVar[str | None] = contextvars.ContextV
 
 ### ********************TOOLS DEFINITION SECTION******************** ###
 search_tool = DuckDuckGoSearchRun(region="in", safesearch="Moderate")
+
 
 @tool
 def calculator(first_num:float, second_num:float, operation:str) -> dict:
@@ -122,8 +125,9 @@ tools = [search_tool, calculator, get_stock_price, query_uploaded_document]
 
 
 
-llm = ChatGroq(
-    model="llama-3.3-70b-versatile", temperature=0.3
+llm = ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash-lite",
+    temperature = 0.6
 )
 
 llm = llm.bind_tools(tools)
