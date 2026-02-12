@@ -19,7 +19,7 @@ import contextvars
 
 load_dotenv()
 
-# RAG embeddings: lazy-load to avoid breaking the app if sentence-transformers/huggingface_hub conflict
+# RAG embeddings
 _embeddings = None
 _rag_available = False
 try:
@@ -123,7 +123,7 @@ tools = [search_tool, calculator, get_stock_price, query_uploaded_document]
 
 
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile", temperature=0.3  # Lower = more reliable tool calls (Groq rejects malformed ones)
+    model="llama-3.3-70b-versatile", temperature=0.3
 )
 
 llm = llm.bind_tools(tools)
@@ -147,7 +147,7 @@ def chat_node(state: ChatState):
 tool_node = ToolNode(tools)
 
 conn = sqlite3.connect(database="chatbot.db", check_same_thread=False)
-checkpointer = SqliteSaver(conn=conn)  #in memory saver is for ram base checkpointing but we want database persistence
+checkpointer = SqliteSaver(conn=conn)
 
 
 ### ******************Graph definition ****************** ###
