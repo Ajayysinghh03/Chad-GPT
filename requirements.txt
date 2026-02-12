@@ -1,0 +1,15 @@
+streamlit
+langchain-core
+langchain-community
+langchain-text-splitters
+langchain-groq
+langgraph
+pypdf
+faiss-cpu
+python-dotenv
+requests
+
+# RAG (PDF Q&A) - use compatible versions to avoid "is_offline_mode" error
+huggingface_hub>=0.20.0,<1
+transformers>=4.36.0
+sentence-transformers>=2.2.0

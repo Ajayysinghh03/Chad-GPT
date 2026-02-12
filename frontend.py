@@ -143,7 +143,8 @@ if user_input:
                         message_placeholder.markdown(full_content + "▌")
             finally:
                 current_thread_id_ctx.reset(token)
-            status_placeholder.caption("✅ Done")
+            # Update status so "Srii is working..." is replaced and box collapses
+            status.update(label="✅ Done", state="complete", expanded=False)
             message_placeholder.markdown(full_content)
 
         ai_message = full_content

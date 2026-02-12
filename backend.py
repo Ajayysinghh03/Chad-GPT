@@ -7,7 +7,6 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_community.tools import DuckDuckGoSearchRun
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.tools import Tool, tool
@@ -19,6 +18,16 @@ import io
 import contextvars
 
 load_dotenv()
+
+# RAG embeddings: lazy-load to avoid breaking the app if sentence-transformers/huggingface_hub conflict
+_embeddings = None
+_rag_available = False
+try:
+    from langchain_community.embeddings import HuggingFaceEmbeddings
+    _embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    _rag_available = True
+except Exception:
+    _rag_available = False
 
 # Context var for current thread_id (set by frontend before streaming so RAG tool can use it)
 current_thread_id_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar("thread_id", default=None)
@@ -58,8 +67,8 @@ def get_stock_price(symbol: str) -> dict:
 ### ******************** RAG (PDF) SECTION ******************** ###
 # Per-thread in-memory vector stores for uploaded PDFs
 _rag_vector_stores: dict[str, FAISS] = {}
-_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 _text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+_RAG_DEPS_MSG = "PDF Q&A is unavailable: dependency error (sentence-transformers/huggingface_hub). Run: pip install -U huggingface_hub transformers sentence-transformers"
 
 
 def _load_pdf_documents(pdf_bytes: bytes) -> list[Document]:
@@ -75,6 +84,8 @@ def _load_pdf_documents(pdf_bytes: bytes) -> list[Document]:
 
 def add_pdf_for_thread(thread_id: str, pdf_bytes: bytes) -> str:
     """Ingest an uploaded PDF for the given thread. Creates/updates the vector store for RAG."""
+    if not _rag_available or _embeddings is None:
+        return _RAG_DEPS_MSG
     docs = _load_pdf_documents(pdf_bytes)
     if not docs:
         return "No text could be extracted from the PDF."
@@ -94,6 +105,8 @@ def query_uploaded_document(question: str) -> str:
     """Search the PDF document that the user uploaded in this chat and answer questions from it.
     Use this when the user asks about their uploaded PDF, e.g. 'what is in my document?', 'summarize the PDF', 'what does the document say about X?'.
     Returns relevant excerpts from the document. If no PDF was uploaded for this chat, returns a message saying so."""
+    if not _rag_available:
+        return _RAG_DEPS_MSG
     thread_id = current_thread_id_ctx.get()
     if not thread_id or thread_id not in _rag_vector_stores:
         return "No PDF has been uploaded in this chat. Ask the user to upload a PDF first, then they can ask questions about it."
