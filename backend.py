@@ -17,6 +17,10 @@ import requests
 import io
 import contextvars
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_community.tools import WikipediaQueryRun
+from langchain_community.utilities import WikipediaAPIWrapper
+from langchain_community.tools.wikidata.tool import WikidataAPIWrapper, WikidataQueryRun
+from langchain_community.utilities.wolfram_alpha import WolframAlphaAPIWrapper
 
 
 load_dotenv()
@@ -37,6 +41,10 @@ current_thread_id_ctx: contextvars.ContextVar[str | None] = contextvars.ContextV
 
 ### ********************TOOLS DEFINITION SECTION******************** ###
 search_tool = DuckDuckGoSearchRun(region="in", safesearch="Moderate")
+wikipedia = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper()) #wikipwdia tool
+wikidata = WikidataQueryRun(api_wrapper=WikidataAPIWrapper())
+
+
 
 
 @tool
@@ -61,7 +69,7 @@ def calculator(first_num:float, second_num:float, operation:str) -> dict:
 
 @tool
 def get_stock_price(symbol: str) -> dict:
-    """Get the current stock price for a given symbol using a public API."""
+    """Get the current stock price for a given symbol using a public API. If it is not able to fetch then use duckduckgosearch"""
     url = f'https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval=5min&apikey=55W3PSBIJOH81THN'
     r = requests.get(url)
     return r.json()
@@ -75,7 +83,7 @@ _RAG_DEPS_MSG = "PDF Q&A is unavailable: dependency error (sentence-transformers
 
 
 def _load_pdf_documents(pdf_bytes: bytes) -> list[Document]:
-    """Load PDF from bytes using pypdf and return LangChain Documents."""
+    """Load PDF from bytes using pypdf and return LangChain Documents. use it to answer from PDF uploaded by the user."""
     reader = PdfReader(io.BytesIO(pdf_bytes))
     docs = []
     for i, page in enumerate(reader.pages):
@@ -121,7 +129,7 @@ def query_uploaded_document(question: str) -> str:
     return f"Relevant excerpts from the uploaded PDF:\n\n{excerpts}"
 
 
-tools = [search_tool, calculator, get_stock_price, query_uploaded_document]
+tools = [search_tool, calculator, get_stock_price, query_uploaded_document, wikipedia,wikidata]
 
 
 
@@ -132,16 +140,37 @@ llm = ChatGoogleGenerativeAI(
 
 llm = llm.bind_tools(tools)
 
+# System prompt for the chatbot
+SYSTEM_PROMPT = """
+You are a helpfull chatbot agent and your name is Srii your are transformed by Ajay Singh Thakur.
+Answer users question interectively.
+Here are some points to keep in mind while answering:
+1. First think that whether you can use any tools to answer or not. If tool is clearly not needed the answer by yourself.
+2. If one tool fails to answer then try another tool just like of duckduckgo not work use wikipedia or for better result use both simultaneously.
+3. Make sure to use BODMAS while using calculator.
+4. You can use multiple tool at once if needed.
+5. If user has uploaded a PDF then try to use informations of that PDF.
+6. If user ask any technical or study related question after answeringask him 2 related questions for follow up.
+7. try to answer in points and organised way
+"""
 
 #state definition
 class ChatState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
+
 def chat_node(state: ChatState):
     """LLM node that may answer the question directly and can call tools if needed."""
     messages = state["messages"]
+    
+    # Prepend system prompt if it's not already the first message
+    if not messages or not isinstance(messages[0], SystemMessage):
+        messages_with_system = [SystemMessage(content=SYSTEM_PROMPT)] + messages
+    else:
+        messages_with_system = messages
+
     try:
-        response = llm.invoke(messages)
+        response = llm.invoke(messages_with_system)
         return {"messages": response}
     except Exception as e:
         # Groq can raise when the model outputs invalid tool calls; return a fallback so the chat doesn't crash
